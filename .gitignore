@@ -1,0 +1,47 @@
+# Generated media and local generation history
+/library/
+/artifacts/
+
+# Raster, audio and video files (keep generated media out of future commits)
+*.[pP][nN][gG]
+*.[jJ][pP][gG]
+*.[jJ][pP][eE][gG]
+*.[wW][eE][bB][pP]
+*.[gG][iI][fF]
+*.[aA][vV][iI][fF]
+*.[bB][mM][pP]
+*.[tT][iI][fF]
+*.[tT][iI][fF][fF]
+*.[mM][pP]4
+*.[wW][eE][bB][mM]
+*.[mM][oO][vV]
+*.[mM][kK][vV]
+*.[aA][vV][iI]
+*.[mM]4[vV]
+*.[mM][pP]3
+*.[wW][aA][vV]
+*.[aA][aA][cC]
+*.[fF][lL][aA][cC]
+*.[oO][gG][gG]
+
+# Local runtime and browser automation data
+/.playwright-mcp/
+/.centurion/
+__pycache__/
+*.py[cod]
+
+# Local secrets and configuration
+.env
+.env.*
+!.env.example
+*.env
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+*.swp
+*.log

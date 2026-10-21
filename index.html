@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101214" />
+    <link rel="icon" href="favicon.svg" />
+    <title>Media Lab</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css?v=20261021-audio-1" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand"><span class="brand-mark">✦</span><span>media lab</span></div>
+        <nav class="nav" aria-label="Основная навигация">
+          <button class="nav-item active" type="button"><span>＋</span>Создать</button>
+          <button class="nav-item" type="button" data-scroll="library"><span>▦</span>Библиотека</button>
+        </nav>
+        <div class="sidebar-footer">
+          <div class="connection"><span class="status-dot" id="statusDot"></span><div><strong id="statusText">Проверяем шлюз</strong><small id="statusDetail">127.0.0.1:8317</small></div></div>
+          <button class="settings-button" id="settingsButton" type="button" aria-label="Настройки подключения">⚙</button>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar"><div><p class="eyebrow">LOCAL CREATIVE WORKSPACE</p><h1>Создай идею.</h1></div><div class="top-actions"><span class="model-count" id="modelCount">— моделей</span><button class="icon-button" id="refreshButton" type="button" title="Обновить список моделей">↻</button></div></header>
+
+        <section class="create-layout" aria-label="Создание медиа">
+          <div class="composer-panel">
+            <div class="mode-switch" role="tablist" aria-label="Тип результата">
+              <button class="mode-tab active" data-mode="image" role="tab" aria-selected="true" type="button"><span class="mode-icon">▧</span>Изображение</button>
+              <button class="mode-tab" data-mode="video" role="tab" aria-selected="false" type="button"><span class="mode-icon">▶</span>Видео</button>
+            </div>
+
+            <form id="generationForm">
+              <div class="field-block"><div class="field-label"><label for="modelSearch">Модель</label><span id="modelHint">image</span></div><div class="model-search-wrap"><span class="model-search-icon">⌕</span><input id="modelSearch" class="model-search" type="search" placeholder="Быстрый поиск модели…" autocomplete="off" /><kbd>/</kbd></div><select id="modelSelect" required><option value="">Загрузка моделей…</option></select></div>
+              <div class="field-block prompt-block"><div class="field-label"><label for="promptInput">Опиши, что хочешь увидеть</label><span id="charCount">0</span></div><textarea id="promptInput" maxlength="4000" placeholder="Например: тёплый вечерний свет в маленьком японском кафе, кинематографичная съёмка…" required></textarea><div class="prompt-footer"><span>Подробный промт даёт больше контроля</span><kbd>⌘ ↵</kbd></div></div>
+
+              <div class="field-block reference-block"><div class="field-label"><span>Референсы <em>до 10 файлов</em></span><span id="referenceCount">0/10</span></div><label class="upload-zone" for="referenceInput"><input id="referenceInput" type="file" accept="image/*,video/*" multiple /><span class="upload-plus">＋</span><span><strong>Добавить референсы</strong><small>Можно выбрать до 10 изображений или видео</small></span><span class="upload-name" id="uploadName"></span></label><div class="reference-preview" id="referencePreview" aria-live="polite"></div></div>
+
+              <div class="options-grid"><div class="field-block"><div class="field-label"><label for="ratioSelect">Соотношение</label></div><select id="ratioSelect"><option value="1024x1024">1:1 · Квадрат</option><option value="1536x1024">3:2 · Альбом</option><option value="1024x1536">2:3 · Портрет</option><option value="1792x1024">16:9 · Широкий</option><option value="1024x1792">9:16 · Вертикальный</option></select></div><div class="field-block" id="durationField"><div class="field-label"><label for="durationSelect">Длительность</label></div><select id="durationSelect"><option value="5">5 секунд</option><option value="8">8 секунд</option><option value="10">10 секунд</option></select></div></div>
+
+              <div class="field-block hidden" id="audioField"><label class="audio-option" for="audioToggle"><span>Генерировать звук</span><span class="audio-choice"><span id="audioState" aria-hidden="true">Без звука</span><input id="audioToggle" type="checkbox" role="switch" disabled /></span></label></div>
+
+              <button class="generate-button" id="generateButton" type="submit"><span class="button-icon">✦</span><span id="generateLabel">Создать изображение</span><span class="button-arrow">↗</span></button>
+              <p class="cost-note">Запрос уйдёт через локальный шлюз <span>·</span> <span id="endpointNote">127.0.0.1:8317</span></p>
+            </form>
+          </div>
+
+          <div class="preview-panel"><div class="preview-heading"><div><p class="eyebrow">OUTPUT</p><h2>Результат</h2></div><span class="result-status" id="resultStatus">Готов к работе</span></div><div class="preview-stage" id="previewStage"><div class="empty-state"><div class="empty-orbit"><span>✦</span></div><h3>Здесь появится твоя работа</h3><p>Выбери модель, напиши промт<br />и запусти первую генерацию.</p></div></div><div class="job-bar hidden" id="jobBar"><span class="loader"></span><span id="jobText">Генерируем…</span><button id="cancelButton" type="button">Отмена</button></div></div>
+        </section>
+
+        <section class="library-section" id="library"><div class="section-heading"><div><p class="eyebrow">DISK LIBRARY</p><h2>Библиотека</h2></div><button class="text-button" id="clearHistory" type="button">Очистить</button></div><div class="history-grid" id="historyGrid"><div class="history-empty">Сгенерированные изображения и видео появятся здесь.</div></div></section>
+      </main>
+    </div>
+
+    <dialog class="settings-dialog" id="settingsDialog"><form method="dialog" id="settingsForm"><div class="dialog-heading"><div><p class="eyebrow">CONNECTION</p><h2>Подключение</h2></div><button class="dialog-close" value="cancel" type="submit">×</button></div><label class="dialog-label" for="endpointInput">Base URL шлюза<input id="endpointInput" type="url" placeholder="http://127.0.0.1:8317" /></label><label class="dialog-label" for="apiKeyInput">API key <em>если включена авторизация</em><input id="apiKeyInput" type="password" placeholder="Не требуется для текущего шлюза" autocomplete="off" /></label><p class="dialog-help">Список моделей загружается из <code>/v1/models</code>. Ключ хранится только в браузере.</p><div class="dialog-actions"><button class="secondary-button" value="cancel" type="submit">Закрыть</button><button class="primary-button" id="saveSettings" value="default" type="submit">Сохранить и проверить</button></div></form></dialog>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="app.js?v=20261021-audio-1"></script>
+  </body>
+</html>

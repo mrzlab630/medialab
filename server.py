@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+import base64
+import json
+import mimetypes
+import os
+import re
+import sys
+import uuid
+from email.parser import BytesParser
+from email.policy import default
+from datetime import datetime, timezone
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import quote, unquote, urlparse
+from urllib.request import Request, urlopen
+
+ROOT = Path(__file__).resolve().parent
+LIBRARY = ROOT / "library"
+INDEX = LIBRARY / "index.json"
+GATEWAY = os.environ.get("MEDIA_GATEWAY_URL", "http://127.0.0.1:8317").rstrip("/")
+ASSET_API_BASE = os.environ.get("MEDIA_ASSET_API_BASE", "https://newapi.apiaw.com").rstrip("/")
+ASSET_API_KEY = os.environ.get("MEDIA_ASSET_API_KEY", "")
+ASSET_ENV_FILE = os.environ.get("MEDIA_ASSET_ENV_FILE", str(Path.home() / "cliproxyapi/video-gateway.env"))
+LIBRARY.mkdir(exist_ok=True)
+
+
+def env_file_value(name):
+    if ASSET_API_KEY:
+        return ASSET_API_KEY
+    try:
+        for line in Path(ASSET_ENV_FILE).read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key.strip() == name:
+                return value.strip().strip("\"'")
+    except OSError:
+        pass
+    return ""
+
+
+def read_items():
+    try:
+        value = json.loads(INDEX.read_text(encoding="utf-8"))
+        return value if isinstance(value, list) else []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def write_items(items):
+    temp = INDEX.with_suffix(".tmp")
+    temp.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp.replace(INDEX)
+
+
+def extension_for(mime, media_type):
+    known = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "video/mp4": ".mp4", "video/webm": ".webm"}
+    return known.get(mime) or (".mp4" if media_type == "video" else mimetypes.guess_extension(mime) or ".bin")
+
+
+class Handler(SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(ROOT), **kwargs)
+
+    def send_json(self, status, value):
+        payload = json.dumps(value, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def proxy_video_content(self, task_id):
+        target = f"{GATEWAY}/v1/videos/{quote(task_id, safe='')}/content"
+        headers = {"User-Agent": "MediaLab/1.0"}
+        authorization = self.headers.get("Authorization")
+        if authorization:
+            headers["Authorization"] = authorization
+        try:
+            with urlopen(Request(target, headers=headers), timeout=180) as response:
+                content = response.read(100 * 1024 * 1024 + 1)
+                if len(content) > 100 * 1024 * 1024:
+                    raise ValueError("video content exceeds 100 MB")
+                mime = response.headers.get_content_type() or "video/mp4"
+                self.send_response(response.status)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Length", str(len(content)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(content)
+        except Exception as error:
+            status = getattr(error, "code", 502)
+            detail = getattr(error, "reason", str(error))
+            self.send_json(status if isinstance(status, int) and 400 <= status <= 599 else 502, {"error": str(detail)})
+
+    def upload_video_asset(self):
+        api_key = env_file_value("APIAW_API_KEY")
+        if not api_key:
+            raise ValueError("APIAW_API_KEY is not configured for reference uploads")
+        content_type = self.headers.get("Content-Type", "")
+        if not content_type.lower().startswith("multipart/form-data"):
+            raise ValueError("reference upload must use multipart/form-data")
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0 or length > 12 * 1024 * 1024:
+            raise ValueError("reference file must be between 1 byte and 10 MB")
+        raw = self.rfile.read(length)
+        message = BytesParser(policy=default).parsebytes(
+            b"Content-Type: " + content_type.encode("ascii", "ignore") + b"\r\nMIME-Version: 1.0\r\n\r\n" + raw
+        )
+        part = next((item for item in message.iter_attachments() if item.get_payload(decode=True)), None)
+        if part is None:
+            raise ValueError("reference file is required")
+        content = part.get_payload(decode=True)
+        if len(content) > 10 * 1024 * 1024:
+            raise ValueError("reference file must not exceed 10 MB")
+        filename = part.get_filename() or "reference.bin"
+        mime = part.get_content_type() or "application/octet-stream"
+        boundary = content_type.split("boundary=", 1)[1].strip().strip('"') if "boundary=" in content_type else ""
+        if not boundary:
+            raise ValueError("multipart boundary is missing")
+        upload_body = (
+            ("--" + boundary + "\r\n").encode()
+            + f'Content-Disposition: form-data; name="file"; filename="{filename.replace(chr(34), "")}"\r\n'.encode()
+            + f"Content-Type: {mime}\r\n\r\n".encode()
+            + content
+            + ("\r\n--" + boundary + "--\r\n").encode()
+        )
+        request = Request(
+            f"{ASSET_API_BASE}/v1/assets",
+            data=upload_body,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "User-Agent": "MediaLab/1.0",
+            },
+            method="POST",
+        )
+        with urlopen(request, timeout=120) as response:
+            response_body = response.read(2 * 1024 * 1024)
+            payload = json.loads(response_body.decode("utf-8"))
+        asset = payload.get("asset") or (payload.get("data") or {}).get("asset")
+        if not asset:
+            raise ValueError("asset service did not return an asset reference")
+        self.send_json(201, {"asset": asset, "name": filename, "mime": mime})
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+        if path == "/api/library":
+            self.send_json(200, read_items())
+            return
+        if path.startswith("/api/videos/") and path.endswith("/content"):
+            task_id = unquote(path[len("/api/videos/"):-len("/content")]).strip("/")
+            if task_id:
+                self.proxy_video_content(task_id)
+                return
+            self.send_json(400, {"error": "task_id is required"})
+            return
+        super().do_GET()
+
+    def do_POST(self):
+        path = urlparse(self.path).path
+        if path == "/api/video-assets":
+            try:
+                self.upload_video_asset()
+            except Exception as error:
+                status = getattr(error, "code", 400)
+                self.send_json(status if isinstance(status, int) and 400 <= status <= 599 else 502, {"error": str(getattr(error, "reason", error))})
+            return
+        if path != "/api/library":
+            self.send_error(404)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > 100 * 1024 * 1024:
+                raise ValueError("invalid payload size")
+            body = json.loads(self.rfile.read(length))
+            media_type = "video" if body.get("type") == "video" else "image"
+            source_url = str(body.get("source_url", ""))
+            data_url = str(body.get("data_url", ""))
+            if source_url.startswith(("http://", "https://")):
+                request = Request(source_url, headers={"User-Agent": "MediaLab/1.0"})
+                with urlopen(request, timeout=120) as response:
+                    content = response.read(100 * 1024 * 1024 + 1)
+                    mime = response.headers.get_content_type()
+            else:
+                match = re.match(r"^data:([^;,]+);base64,(.+)$", data_url, re.S)
+                if not match:
+                    raise ValueError("source_url or data_url is required")
+                mime, encoded = match.groups()
+                content = base64.b64decode(encoded, validate=True)
+            if not content:
+                raise ValueError("empty media")
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            filename = f"{stamp}-{uuid.uuid4().hex[:10]}{extension_for(mime, media_type)}"
+            (LIBRARY / filename).write_bytes(content)
+            item = {
+                "id": uuid.uuid4().hex,
+                "url": f"/library/{filename}",
+                "type": media_type,
+                "prompt": str(body.get("prompt", ""))[:4000],
+                "model": str(body.get("model", ""))[:300],
+                "createdAt": datetime.now(timezone.utc).isoformat(),
+            }
+            items = read_items()
+            items.insert(0, item)
+            write_items(items)
+            self.send_json(201, item)
+        except Exception as error:
+            self.send_json(400, {"error": str(error)})
+
+    def do_DELETE(self):
+        if urlparse(self.path).path != "/api/library":
+            self.send_error(404)
+            return
+        for item in read_items():
+            url = str(item.get("url", ""))
+            if url.startswith("/library/"):
+                (ROOT / unquote(url.lstrip("/"))).unlink(missing_ok=True)
+        write_items([])
+        self.send_json(200, [])
+
+
+def main():
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 4173
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    print(f"Media Lab server listening on http://127.0.0.1:{port}", flush=True)
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
