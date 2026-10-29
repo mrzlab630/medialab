@@ -1,4 +1,4 @@
-const state={endpoint:localStorage.getItem('mediaLabEndpoint')||'http://127.0.0.1:8317',apiKey:localStorage.getItem('mediaLabApiKey')||'',mode:'image',models:[],activeController:null,references:[],history:[]};
+const state={endpoint:localStorage.getItem('mediaLabEndpoint')||'http://127.0.0.1:8317',apiKey:localStorage.getItem('mediaLabApiKey')||'',mode:'image',models:[],modelRequests:0,activeController:null,references:[],history:[],historyPage:1,historyPageSize:10,libraryItem:null,libraryPreset:null};
 localStorage.removeItem('mediaLabHistory');
 const $=s=>document.querySelector(s);const $$=s=>[...document.querySelectorAll(s)];
 const imageEditPriority=['gpt-image-2.5','gpt-image-2','gpt-image-1.5','gpt-image-2.5-flare','gpt-image-2.5-sunburst','dola-seedream-5-0-flash-260915','seedream-5-0-260128','seedream-4-5-251128','dola-seedream-5-0-pro-260628','dola-seedream-5-0-pro-260628-2k','dola-seedream-5-0-pro-260628-ep','grok-imagine-image-2.0','grok-imagine-image'];
@@ -16,15 +16,50 @@ function headers(json=false){const h={};if(json)h['Content-Type']='application/j
 function endpoint(path){return `${state.endpoint.replace(/\/$/,'')}${path}`}
 async function api(path,options={}){const jsonBody=typeof options.body==='string';const response=await fetch(endpoint(path),{...options,headers:{...headers(jsonBody),...(options.headers||{})}});const text=await response.text();let data;try{data=text?JSON.parse(text):{}}catch{data={raw:text}}if(!response.ok){const message=data?.error?.message||data?.message||text||`HTTP ${response.status}`;throw new Error(`${response.status}: ${message}`)}return {response,data}}
 async function libraryApi(path,options={}){const response=await fetch(path,options);const text=await response.text();let data;try{data=text?JSON.parse(text):{}}catch{data={raw:text}}if(!response.ok)throw new Error(data?.error||data?.message||text||`HTTP ${response.status}`);return {response,data}}
-function setStatus(kind,text,detail=state.endpoint.replace(/^https?:\/\//,'')){const dot=$('#statusDot');dot.className=`status-dot ${kind||''}`;$('#statusText').textContent=text;$('#statusDetail').textContent=detail}
-async function loadModels(){setStatus('', 'Проверяем шлюз');try{const {data}=await api('/v1/models');state.models=(data.data||[]).map(item=>typeof item==='string'?item:item.id).filter(Boolean).sort((a,b)=>modelPriority(a,state.mode)-modelPriority(b,state.mode)||a.localeCompare(b));$('#modelCount').textContent=`${state.models.length} моделей`;setStatus('online','Шлюз подключён');renderModels();}catch(error){setStatus('error','Шлюз недоступен',error.message);$('#modelCount').textContent='нет соединения';renderModels();toast(`Не удалось загрузить модели: ${error.message}`)}}
-function renderModels(){const select=$('#modelSelect');const query=$('#modelSearch')?.value.trim().toLowerCase()||'';const filtered=state.models.filter(id=>modelLooks(id,state.mode)&&(!query||id.toLowerCase().includes(query))).sort((a,b)=>modelPriority(a,state.mode)-modelPriority(b,state.mode)||a.localeCompare(b));const fallback=state.mode==='video'?['grok-imagine-video-1.5','dreamina-seedance-2-5-260628','gemini-veo3.1']:['gpt-image-2.5','gemini-3-pro-image-preview','grok-imagine-image'];const choices=filtered.length?filtered:(query?[]:fallback);select.innerHTML='';if(!choices.length){const option=document.createElement('option');option.value='';option.textContent='Модель не найдена';option.disabled=true;option.selected=true;select.append(option)}else{choices.forEach(id=>{const option=document.createElement('option');const status=state.mode==='video'?videoModelStatus[id.toLowerCase()]:(imageModelStatus[id.toLowerCase()]||(isSeedreamModel(id)?'json':''));option.value=id;option.textContent=status==='verified'?`${id} · референсы сохранены`:status==='unverified'?`${id} · референс не подтверждён`:status==='json'?`${id} · JSON-референс`:status==='unavailable'?`${id} · недоступна сейчас`:id;option.disabled=status==='unavailable';select.append(option)})}$('#modelHint').textContent=query?`${filtered.length} найдено`:`${filtered.length||fallback.length} доступно`;updateAudioControl()}
+async function loadModels(){
+  const button=$('#refreshButton');
+  state.modelRequests++;button.disabled=true;button.classList.add('is-loading');button.setAttribute('aria-busy','true');
+  try{
+    const {data}=await api('/v1/models');
+    state.models=(data.data||[]).map(item=>typeof item==='string'?item:item.id).filter(Boolean).sort((a,b)=>modelPriority(a,state.mode)-modelPriority(b,state.mode)||a.localeCompare(b));
+    const images=state.models.filter(id=>modelLooks(id,'image')).length;
+    const videos=state.models.filter(id=>modelLooks(id,'video')).length;
+    $('#modelCount').innerHTML=`<span role="img" title="Модели изображений" aria-label="Модели изображений: ${images}">▧ ${images}</span> · <span role="img" title="Модели видео" aria-label="Модели видео: ${videos}">▶ ${videos}</span>`;
+    renderModels();
+  }catch(error){$('#modelCount').textContent='нет соединения';renderModels();toast(`Не удалось загрузить модели: ${error.message}`)}
+  finally{
+    state.modelRequests--;
+    if(state.modelRequests===0){button.disabled=false;button.classList.remove('is-loading');button.setAttribute('aria-busy','false')}
+  }
+}
+function renderModels(){
+  const select=$('#modelSelect');
+  const preset=state.libraryPreset?.type===state.mode?state.libraryPreset:null;
+  const previous=preset?.model||select.value;
+  const query=$('#modelSearch')?.value.trim().toLowerCase()||'';
+  const filtered=state.models.filter(id=>modelLooks(id,state.mode)&&(!query||id.toLowerCase().includes(query))).sort((a,b)=>modelPriority(a,state.mode)-modelPriority(b,state.mode)||a.localeCompare(b));
+  const fallback=state.mode==='video'?['grok-imagine-video-1.5','dreamina-seedance-2-5-260628','gemini-veo3.1']:['gpt-image-2.5','gemini-3-pro-image-preview','grok-imagine-image'];
+  const choices=filtered.length?filtered:(query?[]:fallback);
+  select.innerHTML='';
+  if(!choices.length){const option=new Option('Модель не найдена','');option.disabled=true;select.append(option)}
+  choices.forEach(id=>{
+    const status=state.mode==='video'?videoModelStatus[id.toLowerCase()]:(imageModelStatus[id.toLowerCase()]||(isSeedreamModel(id)?'json':''));
+    const label=status==='verified'?`${id} · референсы сохранены`:status==='unverified'?`${id} · референс не подтверждён`:status==='json'?`${id} · JSON-референс`:status==='unavailable'?`${id} · недоступна сейчас`:id;
+    const option=new Option(label,id);option.disabled=status==='unavailable';select.append(option);
+  });
+  if(preset&&!query&&preset.model&&!choices.includes(preset.model)){
+    const option=new Option(`${preset.model} · нет в каталоге`,preset.model);option.disabled=true;select.append(option);
+  }
+  if([...select.options].some(option=>option.value===previous))select.value=previous;
+  $('#modelHint').textContent=query?`${filtered.length} найдено`:`${filtered.length||fallback.length} доступно`;
+  updateAudioControl();
+}
 function updateAudioControl(){const available=state.mode==='video'&&supportsVideoAudio($('#modelSelect').value);$('#audioField').classList.toggle('hidden',!available);$('#audioToggle').disabled=!available;$('#audioState').textContent=$('#audioToggle').checked?'Со звуком':'Без звука'}
 function setMode(mode){state.mode=mode;$$('.mode-tab').forEach(button=>{const active=button.dataset.mode===mode;button.classList.toggle('active',active);button.setAttribute('aria-selected',String(active))});$('#generateLabel').textContent=mode==='video'?'Создать видео':'Создать изображение';$('#durationField').classList.toggle('hidden',mode!=='video');$('#ratioSelect').innerHTML=mode==='video'?'<option value="1280x720">16:9 · Широкий</option><option value="720x1280">9:16 · Вертикальный</option><option value="1024x1024">1:1 · Квадрат</option>':'<option value="1024x1024">1:1 · Квадрат</option><option value="1536x1024">3:2 · Альбом</option><option value="1024x1536">2:3 · Портрет</option><option value="1792x1024">16:9 · Широкий</option><option value="1024x1792">9:16 · Вертикальный</option>';renderModels()}
 function showEmpty(){ $('#previewStage').innerHTML='<div class="empty-state"><div class="empty-orbit"><span>✦</span></div><h3>Здесь появится твоя работа</h3><p>Выбери модель, напиши промт<br />и запусти первую генерацию.</p></div>' }
 function showError(error){const privacyRejected=/InputImageSensitiveContentDetected\.PrivacyInformation/i.test(error.message);const title=privacyRejected?'Seedance отклонила референс':'Не удалось создать результат';const detail=privacyRejected?'Входное изображение заблокировано проверкой безопасности как возможное фото реального человека. Задача генерации не создана.':error.message;const hint=privacyRejected?'':'<br /><br />Проверь модель и маршрут шлюза. Для видео используется <code>/v1/videos/generations</code>, для изображений — <code>/v1/images/generations</code>.';$('#previewStage').innerHTML=`<div class="preview-error"><strong>${title}</strong><p>${escapeHtml(detail)}${hint}</p></div>`}
 function escapeHtml(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
-function setBusy(busy,text='Генерируем…'){$('#generateButton').disabled=busy;$('#jobBar').classList.toggle('hidden',!busy);$('#jobText').textContent=text}
+function setBusy(busy,text='Генерируем…'){$('#generateButton').disabled=busy;$('#reuseLibraryItem').disabled=busy;$('#jobBar').classList.toggle('hidden',!busy);$('#jobText').textContent=text}
 function mediaFrom(data,mode){const item=data?.data?.[0]||data?.output?.[0]||data?.result||data;const url=item?.url||item?.video_url||item?.output_url;const b64=item?.b64_json||item?.base64;if(url)return {url,type:mode};if(b64)return {url:`data:${mode==='video'?'video/mp4':'image/png'};base64,${b64}`,type:mode};return null}
 function renderMedia(media){const el=media.type==='video'?document.createElement('video'):document.createElement('img');el.className='result-media';el.controls=media.type==='video';el.autoplay=media.type==='video';el.loop=media.type==='video';el.alt='Результат генерации';el.src=media.url;$('#previewStage').replaceChildren(el)}
 async function generateImage(prompt,model,size,references){if(!references.length){const body={model,prompt,n:1,size:isSeedreamModel(model)?seedreamSize(size):size,response_format:'url'};const {data}=await api('/v1/images/generations',{method:'POST',body:JSON.stringify(body)});const media=mediaFrom(data,'image');if(!media)throw new Error('Шлюз не вернул URL или изображение');return media}if(isSeedreamModel(model)){const body={model,prompt,n:1,size:seedreamSize(size),response_format:'url',image:references.length===1?references[0].dataUrl:references.map(reference=>reference.dataUrl)};const {data}=await api('/v1/images/generations',{method:'POST',body:JSON.stringify(body)});const media=mediaFrom(data,'image');if(!media)throw new Error('Шлюз не вернул URL или изображение после редактирования');return media}const form=new FormData();form.append('model',model);form.append('prompt',prompt);form.append('n','1');form.append('size',size);form.append('response_format','url');for(const reference of references){const blob=await (await fetch(reference.dataUrl)).blob();form.append('image[]',blob,reference.name)}const {data}=await api('/v1/images/edits',{method:'POST',body:form});const media=mediaFrom(data,'image');if(!media)throw new Error('Шлюз не вернул URL или изображение после редактирования');return media}
@@ -33,16 +68,126 @@ function isApiwSeedanceReferenceModel(model){return /(?:^|\/)dreamina-seedance-2
 function videoPromptWithReferences(prompt,references){if(!references.length)return prompt;let imageIndex=0,videoIndex=0;const labels=references.map(reference=>reference.type.startsWith('video/')?`Video ${++videoIndex}`:`Image ${++imageIndex}`);return `Используй загруженные материалы в указанном порядке: ${labels.join(', ')}. Их роль определяется описанием задачи ниже.\n\n${prompt}`}
 async function generateVideo(prompt,model,size,seconds,references,generateAudio=false){const usesApiwSeedance=isApiwSeedanceReferenceModel(model);const uploaded=usesApiwSeedance?await Promise.all(references.map(uploadVideoReference)):[];const body={model,prompt:usesApiwSeedance?videoPromptWithReferences(prompt,references):prompt,seconds:String(seconds),size,resolution:'720p'};if(supportsVideoAudio(model))body.generate_audio=Boolean(generateAudio);if(usesApiwSeedance){Object.assign(body,{duration:Number(seconds),aspect_ratio:size==='720x1280'?'9:16':size==='1024x1024'?'1:1':'16:9'});const images=uploaded.filter(item=>item.type.startsWith('image/')).map(item=>item.asset);const videos=uploaded.filter(item=>item.type.startsWith('video/')).map(item=>item.asset);if(images.length)body.images=images;if(videos.length)body.videos=videos}else if(references.length){body.input_reference=references.length===1?references[0].dataUrl:references.map(reference=>reference.dataUrl)}let {data}=await api('/v1/videos/generations',{method:'POST',body:JSON.stringify(body)});let taskId=data.task_id||data.id||data.data?.task_id||data.data?.id;if(!taskId){const direct=mediaFrom(data,'video');if(direct)return direct;throw new Error('Шлюз не вернул task_id')}for(let attempt=0;attempt<90;attempt++){if(!state.activeController)throw new Error('Запрос отменён');await new Promise(resolve=>setTimeout(resolve,4000));const result=await api(`/v1/videos/${encodeURIComponent(taskId)}`);const status=String(result.data.status||result.data.data?.status||'').toLowerCase();$('#jobText').textContent=status?`Видео: ${status} · попытка ${attempt+1}`:`Видео: проверяем результат · ${attempt+1}`;const media=mediaFrom(result.data,'video');if(media)return media;if(['failed','error','cancelled','canceled'].includes(status))throw new Error(result.data.error?.message||`Задача завершилась со статусом ${status}`);if(['completed','success','succeeded'].includes(status)){const response=await fetch(`/api/videos/${encodeURIComponent(taskId)}/content`);if(!response.ok)throw new Error(`Не удалось скачать видео: HTTP ${response.status}`);return {url:URL.createObjectURL(await response.blob()),type:'video'}}}throw new Error('Истёк таймаут ожидания видео')}
 function mediaDataUrl(media){if(/^data:/i.test(media.url))return Promise.resolve(media.url);return fetch(media.url).then(response=>{if(!response.ok)throw new Error(`Не удалось скачать результат: HTTP ${response.status}`);return response.blob()}).then(blob=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(blob)}))}
-async function saveLibrary(media,prompt,model){const payload={type:media.type,prompt,model};if(/^https?:\/\//i.test(media.url))payload.source_url=media.url;else payload.data_url=await mediaDataUrl(media);const {data}=await libraryApi('/api/library',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});return data}
+async function saveLibrary(media,prompt,model,parameters){const payload={type:media.type,prompt,model,parameters};if(/^https?:\/\//i.test(media.url))payload.source_url=media.url;else payload.data_url=await mediaDataUrl(media);const {data}=await libraryApi('/api/library',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});return data}
 async function loadLibrary(){try{const {data}=await libraryApi('/api/library');state.history=Array.isArray(data)?data:[];renderHistory()}catch(error){toast(`Библиотека недоступна: ${error.message}`)}}
-async function addHistory(media,prompt,model){try{const item=await saveLibrary(media,prompt,model);state.history.unshift(item)}catch(error){state.history.unshift({id:Date.now(),url:media.url,type:media.type,prompt,model});toast(`Результат создан, но не сохранён на диск: ${error.message}`)}state.history=state.history.slice(0,50);renderHistory()}
-function renderHistory(){const grid=$('#historyGrid');if(!state.history.length){grid.innerHTML='<div class="history-empty">Сгенерированные изображения и видео появятся здесь.</div>';return}grid.innerHTML='';state.history.forEach(item=>{const card=document.createElement('article');card.className='history-card';const thumb=document.createElement('div');thumb.className='history-thumb';if(item.url){if(item.type==='video'){const video=document.createElement('video');video.src=item.url;video.muted=true;thumb.append(video)}else{const image=document.createElement('img');image.src=item.url;image.alt='';thumb.append(image)}}else{thumb.textContent='Файл недоступен'}const meta=document.createElement('div');meta.className='history-meta';meta.innerHTML=`<strong>${escapeHtml(item.prompt)}</strong><small>${escapeHtml(item.model)} · ${item.type==='video'?'видео':'изображение'}</small>`;card.append(thumb,meta);if(item.url)card.addEventListener('click',()=>renderMedia(item));grid.append(card)})}
+async function addHistory(media,prompt,model,parameters){try{const item=await saveLibrary(media,prompt,model,parameters);state.history.unshift(item)}catch(error){state.history.unshift({id:Date.now(),url:media.url,type:media.type,prompt,model,parameters});toast(`Результат создан, но не сохранён на диск: ${error.message}`)}state.historyPage=1;renderHistory()}
+function renderHistory(){
+  const grid=$('#historyGrid'),total=state.history.length;
+  const pages=Math.max(1,Math.ceil(total/state.historyPageSize));
+  state.historyPage=Math.max(1,Math.min(state.historyPage,pages));
+  const start=(state.historyPage-1)*state.historyPageSize;
+  $('#historyPagination').classList.toggle('hidden',total===0);
+  $('#historyRange').textContent=total?`${start+1}–${Math.min(start+state.historyPageSize,total)} из ${total}`:'0 из 0';
+  $('#historyPagePosition').textContent=`Страница ${state.historyPage} из ${pages}`;
+  $('#historyPrevious').disabled=state.historyPage===1;
+  $('#historyNext').disabled=state.historyPage===pages;
+  if(!total){grid.innerHTML='<div class="history-empty">Сгенерированные изображения и видео появятся здесь.</div>';return}
+  grid.innerHTML='';
+  state.history.slice(start,start+state.historyPageSize).forEach(item=>{const card=document.createElement('button');card.type='button';card.className='history-card';card.setAttribute('aria-haspopup','dialog');card.setAttribute('aria-controls','libraryDialog');card.setAttribute('aria-label',`Открыть ${item.type==='video'?'видео':'изображение'}: ${String(item.prompt||'Без промпта').slice(0,120)}`);const thumb=document.createElement('span');thumb.className='history-thumb';if(item.url){if(item.type==='video'){const video=document.createElement('video');video.src=item.url;video.muted=true;thumb.append(video)}else{const image=document.createElement('img');image.src=item.url;image.alt='';thumb.append(image)}}else{thumb.textContent='Файл недоступен'}const meta=document.createElement('span');meta.className='history-meta';meta.innerHTML=`<strong>${escapeHtml(item.prompt)}</strong><small>${escapeHtml(item.model)} · ${item.type==='video'?'видео':'изображение'}</small>`;card.append(thumb,meta);card.addEventListener('click',()=>openLibraryItem(item));grid.append(card)});
+}
+function changeHistoryPage(direction){
+  state.historyPage+=direction;renderHistory();
+  $('#library').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});
+}
+function libraryMetadata(label,value){
+  const term=document.createElement('dt'),description=document.createElement('dd');
+  term.textContent=label;description.textContent=value;$('#libraryMetadata').append(term,description);
+  return description;
+}
+function openLibraryItem(item){
+  state.libraryItem=item;
+  $('#libraryPrompt').textContent=item.prompt||'Промпт не сохранён';
+  $('#libraryMetadata').replaceChildren();
+  libraryMetadata('Модель',item.model||'Не сохранена');
+  libraryMetadata('Тип',item.type==='video'?'Видео':'Изображение');
+  const parameters=item.parameters||{};
+  if(parameters.size)libraryMetadata('Размер в запросе',parameters.size.replace('x',' × '));
+  if(item.type==='video'&&parameters.seconds!=null)libraryMetadata('Длительность в запросе',`${parameters.seconds} с`);
+  if(item.type==='video'&&typeof parameters.generate_audio==='boolean')libraryMetadata('Звук',parameters.generate_audio?'Включён':'Выключен');
+  if(parameters.reference_count!=null)libraryMetadata('Референсы',String(parameters.reference_count));
+  const created=new Date(item.createdAt);
+  if(!Number.isNaN(created.getTime()))libraryMetadata('Создано',created.toLocaleString('ru-RU'));
+  const dimensions=libraryMetadata('Размер файла','Определяется…');
+  const duration=item.type==='video'?libraryMetadata('Длительность файла','Определяется…'):null;
+  $('#libraryParametersNote').textContent=!parameters.size?'Подробные параметры этой работы не сохранены. В форму можно перенести промпт, модель и тип.':parameters.reference_count>0?'Исходные референсы не сохраняются. Добавьте их заново перед генерацией.':'';
+  $('#reuseLibraryItem').disabled=Boolean(state.activeController);
+  const preview=$('#libraryPreview');
+  const media=document.createElement(item.type==='video'?'video':'img');
+  if(item.type==='video'){media.controls=true;media.playsInline=true;media.preload='metadata'}else media.alt=item.prompt||'Работа из библиотеки';
+  media.addEventListener(item.type==='video'?'loadedmetadata':'load',()=>{
+    if(state.libraryItem!==item)return;
+    dimensions.textContent=`${media.videoWidth||media.naturalWidth} × ${media.videoHeight||media.naturalHeight}`;
+    if(duration)duration.textContent=Number.isFinite(media.duration)?`${Number(media.duration.toFixed(1)).toLocaleString('ru-RU')} с`:'Не определена';
+  });
+  const unavailable=()=>{
+    if(state.libraryItem!==item)return;
+    dimensions.textContent='Не удалось определить';if(duration)duration.textContent='Не удалось определить';
+    const message=document.createElement('p');message.textContent='Файл недоступен. Сохранённые параметры можно использовать для новой работы.';preview.replaceChildren(message);
+  };
+  media.addEventListener('error',unavailable);
+  preview.replaceChildren(media);if(item.url)media.src=item.url;else unavailable();
+  $('#libraryDialog').showModal();
+}
+function selectSavedValue(selector,value,label=String(value)){
+  const select=$(selector);
+  if(![...select.options].some(option=>option.value===String(value)))select.add(new Option(label,String(value)));
+  select.value=String(value);
+}
+function reuseLibraryItem(){
+  const item=state.libraryItem;
+  if(!item||state.activeController)return;
+  const parameters=item.parameters||{};
+  const type=item.type==='video'?'video':'image';
+  $('#modelSearch').value='';
+  state.libraryPreset={model:item.model||'',type};setMode(type);
+  if(!item.model){const missing=new Option('Исходная модель не сохранена','');missing.disabled=true;$('#modelSelect').add(missing);$('#modelSelect').value=''}
+  $('#promptInput').value=item.prompt||'';$('#charCount').textContent=$('#promptInput').value.length;
+  if(parameters.size)selectSavedValue('#ratioSelect',parameters.size);
+  selectSavedValue('#durationSelect',parameters.seconds||5,`${parameters.seconds||5} секунд`);
+  $('#audioToggle').checked=parameters.generate_audio===true;updateAudioControl();
+  state.references=[];renderReferences();
+  const unavailable=$('#modelSelect').selectedOptions[0]?.disabled||!$('#modelSelect').value;
+  $('#libraryDialog').close();
+  $('#promptInput').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'center'});$('#promptInput').focus({preventScroll:true});
+  const messages=[parameters.size?'Параметры перенесены в форму':'Промпт и модель перенесены. Другие параметры не были сохранены'];
+  if(parameters.reference_count>0)messages.push('Референсы нужно добавить заново');
+  if(unavailable)messages.push('Модель недоступна — выберите другую в списке');
+  toast(messages.join('. '));
+}
 function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.classList.remove('show'),4200)}
 function fileToData(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve({name:file.name,size:file.size,type:file.type,dataUrl:reader.result});reader.onerror=reject;reader.readAsDataURL(file)})}
 function renderReferences(){const preview=$('#referencePreview');preview.replaceChildren();$('#referenceCount').textContent=`${state.references.length}/10`;$('#uploadName').textContent=state.references.length?`${state.references.length} выбрано`:'';state.references.forEach((reference,index)=>{const card=document.createElement('figure');card.className='reference-card';const media=reference.type.startsWith('video/')?document.createElement('video'):document.createElement('img');media.src=reference.dataUrl;media.alt=reference.name;media.muted=true;media.preload='metadata';card.append(media);const remove=document.createElement('button');remove.type='button';remove.className='reference-remove';remove.dataset.referenceIndex=String(index);remove.setAttribute('aria-label',`Удалить ${reference.name}`);remove.textContent='×';card.append(remove);const caption=document.createElement('figcaption');caption.textContent=String(index+1);card.append(caption);preview.append(card)})}
-$('#generationForm').addEventListener('submit',async event=>{event.preventDefault();const prompt=$('#promptInput').value.trim();if(!prompt)return;const model=$('#modelSelect').value;const size=$('#ratioSelect').value;if(state.mode==='image'&&state.references.some(reference=>!reference.type.startsWith('image/'))){showError(new Error('Для изображения используйте референсы в формате изображения'));return}if(state.mode==='image'&&state.references.length>referenceLimit(model)){showError(new Error(`Модель ${model} принимает максимум ${referenceLimit(model)} референсов для редактирования`));return}state.activeController=new AbortController();setBusy(true,state.mode==='video'?'Создаём видео…':'Создаём изображение…');$('#resultStatus').textContent='В работе';try{const media=state.mode==='video'?await generateVideo(prompt,model,size,$('#durationSelect').value,state.references,$('#audioToggle').checked):await generateImage(prompt,model,size,state.references);renderMedia(media);await addHistory(media,prompt,model);$('#resultStatus').textContent='Готово';toast('Результат создан');}catch(error){showError(error);$('#resultStatus').textContent='Ошибка';toast(error.message)}finally{state.activeController=null;setBusy(false)}});
+$('#generationForm').addEventListener('submit',async event=>{
+  event.preventDefault();
+  const prompt=$('#promptInput').value.trim();if(!prompt)return;
+  const model=$('#modelSelect').value;
+  if(!model||$('#modelSelect').selectedOptions[0]?.disabled){toast('Выберите доступную модель');return}
+  const mode=state.mode,size=$('#ratioSelect').value,references=[...state.references];
+  if(mode==='image'&&references.some(reference=>!reference.type.startsWith('image/'))){showError(new Error('Для изображения используйте референсы в формате изображения'));return}
+  if(mode==='image'&&references.length>referenceLimit(model)){showError(new Error(`Модель ${model} принимает максимум ${referenceLimit(model)} референсов для редактирования`));return}
+  const parameters={size,reference_count:references.length};
+  if(mode==='video'){parameters.seconds=Number($('#durationSelect').value);if(supportsVideoAudio(model))parameters.generate_audio=$('#audioToggle').checked}
+  state.activeController=new AbortController();setBusy(true,mode==='video'?'Создаём видео…':'Создаём изображение…');$('#resultStatus').textContent='В работе';
+  try{
+    const media=mode==='video'?await generateVideo(prompt,model,size,parameters.seconds,references,parameters.generate_audio):await generateImage(prompt,model,size,references);
+    renderMedia(media);await addHistory(media,prompt,model,parameters);$('#resultStatus').textContent='Готово';toast('Результат создан');
+  }catch(error){showError(error);$('#resultStatus').textContent='Ошибка';toast(error.message)}
+  finally{state.activeController=null;setBusy(false)}
+});
 $('#cancelButton').addEventListener('click',()=>{state.activeController=null;setBusy(false);$('#resultStatus').textContent='Отменено';toast('Запрос отменён')});$('#promptInput').addEventListener('input',event=>$('#charCount').textContent=event.target.value.length);$('#modelSearch').addEventListener('input',renderModels);$('#referenceInput').addEventListener('change',async event=>{const files=[...event.target.files];const keys=new Set(state.references.map(item=>`${item.name}:${item.size}`));const unique=files.filter(file=>!keys.has(`${file.name}:${file.size}`));const room=10-state.references.length;if(unique.length>room)toast('Можно добавить максимум 10 референсов');if(room>0)state.references.push(...await Promise.all(unique.slice(0,room).map(fileToData)));event.target.value='';renderReferences()});$('#referencePreview').addEventListener('click',event=>{const button=event.target.closest('[data-reference-index]');if(!button)return;state.references.splice(Number(button.dataset.referenceIndex),1);renderReferences()});document.addEventListener('keydown',event=>{if(event.key==='/'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)){event.preventDefault();$('#modelSearch').focus()}if(event.key==='Escape'&&document.activeElement===$('#modelSearch')){$('#modelSearch').value='';renderModels()}});$$('.mode-tab').forEach(button=>button.addEventListener('click',()=>setMode(button.dataset.mode)));$('#refreshButton').addEventListener('click',loadModels);$('#settingsButton').addEventListener('click',()=>{$('#endpointInput').value=state.endpoint;$('#apiKeyInput').value=state.apiKey;$('#settingsDialog').showModal()});$('#settingsForm').addEventListener('submit',event=>{if(event.submitter?.value==='cancel')return;event.preventDefault();state.endpoint=$('#endpointInput').value.trim().replace(/\/$/,'')||'http://127.0.0.1:8317';state.apiKey=$('#apiKeyInput').value.trim();localStorage.setItem('mediaLabEndpoint',state.endpoint);localStorage.setItem('mediaLabApiKey',state.apiKey);$('#settingsDialog').close();$('#endpointNote').textContent=state.endpoint.replace(/^https?:\/\//,'');loadModels()});$('#clearHistory').addEventListener('click',async()=>{try{await libraryApi('/api/library',{method:'DELETE'});state.history=[];renderHistory();toast('Библиотека очищена')}catch(error){toast(`Не удалось очистить библиотеку: ${error.message}`)}});$$('[data-scroll]').forEach(button=>button.addEventListener('click',()=>$('#'+button.dataset.scroll).scrollIntoView({behavior:'smooth'})));
-$('#modelSelect').addEventListener('change',updateAudioControl);$('#audioToggle').addEventListener('change',updateAudioControl);
+$('#modelSelect').addEventListener('change',()=>{state.libraryPreset=null;updateAudioControl()});$('#audioToggle').addEventListener('change',updateAudioControl);
+$('#historyPageSize').addEventListener('change',event=>{
+  const size=Number(event.target.value);if(![10,30,50,100].includes(size))return;
+  state.historyPageSize=size;state.historyPage=1;renderHistory();
+});
+$('#historyPrevious').addEventListener('click',()=>changeHistoryPage(-1));
+$('#historyNext').addEventListener('click',()=>changeHistoryPage(1));
+$('#reuseLibraryItem').addEventListener('click',reuseLibraryItem);
+$('#libraryDialog').addEventListener('close',()=>{
+  state.libraryItem=null;
+  const video=$('#libraryPreview video');if(video){video.pause();video.removeAttribute('src');video.load()}
+  $('#libraryPreview').replaceChildren();
+});
 $('#agentsButton').addEventListener('click',()=>{
   const base=location.origin;
   $('#agentBaseUrl').textContent=base;

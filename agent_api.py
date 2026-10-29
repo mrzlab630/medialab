@@ -285,6 +285,11 @@ class AgentAPI:
             media = self.media_items(result)
             if not media:
                 raise APIError(502, "Gateway returned no media or video task ID")
+            parameters = {"size": request["size"], "reference_count": len(request["references"])}
+            if request["type"] == "video":
+                parameters["seconds"] = request["seconds"]
+                if request["model"].lower().split("/")[-1] in VIDEO_AUDIO:
+                    parameters["generate_audio"] = request.get("generate_audio", False)
             results = []
             for item in media:
                 url = item.get("url") or item.get("video_url") or item.get("output_url")
@@ -301,7 +306,7 @@ class AgentAPI:
                     mime = item.get("mime") or ("video/mp4" if request["type"] == "video" else "image/png")
                 if not mime.startswith(request["type"] + "/"):
                     raise APIError(502, "Gateway returned an unexpected media content type")
-                results.append(self.store_media(content, mime, request["type"], request["prompt"], request["model"]))
+                results.append(self.store_media(content, mime, request["type"], request["prompt"], request["model"], parameters))
             self.update(job_id, status="completed", results=results)
         except Exception as error:
             self.update(job_id, status="failed", error={"message": str(error)[:2000]})
@@ -344,7 +349,13 @@ def openapi():
                 "generate_audio": {"type": "boolean", "description": "Video only. Supported models: " + ", ".join(sorted(VIDEO_AUDIO)) + ". Defaults to false for these models."},
                 "references": {"type": "array", "maxItems": 10, "items": {"type": "string"}, "description": "Up to 10 image/video references, 5 for Grok image 2.0; at most 10 MB each. Use base64 data URLs, HTTP(S) URLs, or existing /library/ file URLs. Image generation accepts images only. Seedance 2.5 uploads through the existing server asset service."},
             }},
-            "Media": {"type": "object", "required": ["id", "url", "type"], "properties": {name: {"type": "string"} for name in ("id", "url", "type", "prompt", "model", "createdAt")}},
+            "Media": {"type": "object", "required": ["id", "url", "type"], "properties": {
+                **{name: {"type": "string"} for name in ("id", "url", "type", "prompt", "model", "createdAt")},
+                "parameters": {"type": "object", "description": "Saved generation settings, absent on older library items. Reference files are not retained.", "properties": {
+                    "size": {"type": "string"}, "seconds": {"type": "integer"},
+                    "generate_audio": {"type": "boolean"}, "reference_count": {"type": "integer"},
+                }},
+            }},
             "Job": {"type": "object", "required": ["id", "status", "status_url", "results"], "properties": {
                 **{name: {"type": "string"} for name in ("id", "type", "model", "prompt", "status_url", "createdAt", "updatedAt")},
                 "status": {"type": "string", "enum": ["queued", "running", "completed", "failed", "interrupted"]},

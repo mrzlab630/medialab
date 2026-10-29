@@ -60,9 +60,21 @@ def extension_for(mime, media_type):
     return known.get(mime) or (".mp4" if media_type == "video" else mimetypes.guess_extension(mime) or ".bin")
 
 
-def store_media(content, mime, media_type, prompt, model):
+def store_media(content, mime, media_type, prompt, model, parameters=None):
     if not content or len(content) > 100 * 1024 * 1024:
         raise ValueError("media must be between 1 byte and 100 MB")
+    if parameters is not None:
+        if not isinstance(parameters, dict):
+            raise ValueError("parameters must be an object")
+        parameters = {key: parameters[key] for key in ("size", "seconds", "generate_audio", "reference_count") if key in parameters}
+        if "size" in parameters and (not isinstance(parameters["size"], str) or not re.fullmatch(r"[1-9]\d{1,4}x[1-9]\d{1,4}", parameters["size"])):
+            raise ValueError("parameters.size must have WIDTHxHEIGHT format")
+        if "seconds" in parameters and (type(parameters["seconds"]) is not int or not 1 <= parameters["seconds"] <= 60):
+            raise ValueError("parameters.seconds must be an integer between 1 and 60")
+        if "generate_audio" in parameters and type(parameters["generate_audio"]) is not bool:
+            raise ValueError("parameters.generate_audio must be a boolean")
+        if "reference_count" in parameters and (type(parameters["reference_count"]) is not int or not 0 <= parameters["reference_count"] <= 10):
+            raise ValueError("parameters.reference_count must be an integer between 0 and 10")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     filename = f"{stamp}-{uuid.uuid4().hex[:10]}{extension_for(mime, media_type)}"
     item = {
@@ -73,6 +85,8 @@ def store_media(content, mime, media_type, prompt, model):
         "model": str(model)[:300],
         "createdAt": datetime.now(timezone.utc).isoformat(),
     }
+    if parameters is not None:
+        item["parameters"] = parameters
     with LIBRARY_LOCK:
         (LIBRARY / filename).write_bytes(content)
         items = read_items()
@@ -236,7 +250,7 @@ class Handler(SimpleHTTPRequestHandler):
                     raise ValueError("source_url or data_url is required")
                 mime, encoded = match.groups()
                 content = base64.b64decode(encoded, validate=True)
-            item = store_media(content, mime, media_type, body.get("prompt", ""), body.get("model", ""))
+            item = store_media(content, mime, media_type, body.get("prompt", ""), body.get("model", ""), body.get("parameters"))
             self.send_json(201, item)
         except Exception as error:
             self.send_json(400, {"error": str(error)})

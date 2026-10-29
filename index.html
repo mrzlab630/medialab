@@ -9,24 +9,12 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css?v=0.2.0" />
+    <link rel="stylesheet" href="styles.css?v=0.3.0" />
   </head>
   <body>
     <div class="app-shell">
-      <aside class="sidebar">
-        <div class="brand"><span class="brand-mark">✦</span><span>media lab</span></div>
-        <nav class="nav" aria-label="Основная навигация">
-          <button class="nav-item active" type="button"><span>＋</span>Создать</button>
-          <button class="nav-item" type="button" data-scroll="library"><span>▦</span>Библиотека</button>
-        </nav>
-        <div class="sidebar-footer">
-          <div class="connection"><span class="status-dot" id="statusDot"></span><div><strong id="statusText">Проверяем шлюз</strong><small id="statusDetail">127.0.0.1:8317</small></div></div>
-          <button class="settings-button" id="settingsButton" type="button" aria-label="Настройки подключения">⚙</button>
-        </div>
-      </aside>
-
       <main class="main-content">
-        <header class="topbar"><div><p class="eyebrow">LOCAL CREATIVE WORKSPACE</p><h1>Создай идею.</h1></div><div class="top-actions"><button class="agents-button" id="agentsButton" type="button" aria-haspopup="dialog" aria-controls="agentsDialog">ИИ агентам</button><span class="model-count" id="modelCount">— моделей</span><button class="icon-button" id="refreshButton" type="button" title="Обновить список моделей">↻</button></div></header>
+        <header class="topbar"><div><p class="eyebrow">LOCAL CREATIVE WORKSPACE</p><h1>Создай идею.</h1></div><div class="top-actions"><button class="agents-button" id="agentsButton" type="button" aria-haspopup="dialog" aria-controls="agentsDialog">ИИ агентам</button><button class="settings-button" id="settingsButton" type="button" title="Настройки подключения" aria-label="Настройки подключения" aria-haspopup="dialog" aria-controls="settingsDialog"><span aria-hidden="true">⚙</span></button><span class="model-count" id="modelCount" aria-live="polite"><span role="img" title="Модели изображений" aria-label="Модели изображений">▧ —</span> · <span role="img" title="Модели видео" aria-label="Модели видео">▶ —</span></span><button class="icon-button" id="refreshButton" type="button" title="Обновить список моделей" aria-label="Обновить список моделей" aria-busy="false"><span class="refresh-icon" aria-hidden="true">↻</span></button></div></header>
 
         <section class="create-layout" aria-label="Создание медиа">
           <div class="composer-panel">
@@ -53,10 +41,26 @@
           <div class="preview-panel"><div class="preview-heading"><div><p class="eyebrow">OUTPUT</p><h2>Результат</h2></div><span class="result-status" id="resultStatus">Готов к работе</span></div><div class="preview-stage" id="previewStage"><div class="empty-state"><div class="empty-orbit"><span>✦</span></div><h3>Здесь появится твоя работа</h3><p>Выбери модель, напиши промт<br />и запусти первую генерацию.</p></div></div><div class="job-bar hidden" id="jobBar"><span class="loader"></span><span id="jobText">Генерируем…</span><button id="cancelButton" type="button">Отмена</button></div></div>
         </section>
 
-        <section class="library-section" id="library"><div class="section-heading"><div><p class="eyebrow">DISK LIBRARY</p><h2>Библиотека</h2></div><button class="text-button" id="clearHistory" type="button">Очистить</button></div><div class="history-grid" id="historyGrid"><div class="history-empty">Сгенерированные изображения и видео появятся здесь.</div></div></section>
+        <section class="library-section" id="library">
+          <div class="section-heading"><div><p class="eyebrow">DISK LIBRARY</p><h2>Библиотека</h2></div><div class="library-controls"><label class="library-page-size" for="historyPageSize">Показывать<select id="historyPageSize" aria-controls="historyGrid"><option value="10">10</option><option value="30">30</option><option value="50">50</option><option value="100">100</option></select></label><button class="text-button" id="clearHistory" type="button">Очистить</button></div></div>
+          <div class="history-grid" id="historyGrid"><div class="history-empty">Сгенерированные изображения и видео появятся здесь.</div></div>
+          <nav class="library-pagination hidden" id="historyPagination" aria-label="Страницы библиотеки"><button class="library-page-button" id="historyPrevious" type="button" aria-controls="historyGrid" disabled>Назад</button><span class="library-page-status" aria-live="polite" aria-atomic="true"><span id="historyRange">0 из 0</span><small id="historyPagePosition">Страница 1 из 1</small></span><button class="library-page-button" id="historyNext" type="button" aria-controls="historyGrid" disabled>Далее</button></nav>
+        </section>
       </main>
     </div>
 
+    <dialog class="library-dialog" id="libraryDialog" aria-labelledby="libraryDialogTitle">
+      <header class="library-dialog-heading"><div><p class="eyebrow">БИБЛИОТЕКА</p><h2 id="libraryDialogTitle">Просмотр работы</h2></div><form method="dialog"><button class="dialog-close" type="submit" aria-label="Закрыть просмотр">×</button></form></header>
+      <div class="library-dialog-layout">
+        <div class="library-dialog-preview" id="libraryPreview"></div>
+        <div class="library-dialog-details">
+          <h3>Промпт</h3><p class="library-prompt" id="libraryPrompt"></p>
+          <dl class="library-metadata" id="libraryMetadata"></dl>
+          <p class="library-parameters-note" id="libraryParametersNote"></p>
+          <button class="primary-button" id="reuseLibraryItem" type="button">Создать на основе этого</button>
+        </div>
+      </div>
+    </dialog>
     <dialog class="settings-dialog" id="settingsDialog"><form method="dialog" id="settingsForm"><div class="dialog-heading"><div><p class="eyebrow">CONNECTION</p><h2>Подключение</h2></div><button class="dialog-close" value="cancel" type="submit">×</button></div><label class="dialog-label" for="endpointInput">Base URL шлюза<input id="endpointInput" type="url" placeholder="http://127.0.0.1:8317" /></label><label class="dialog-label" for="apiKeyInput">API key <em>если включена авторизация</em><input id="apiKeyInput" type="password" placeholder="Не требуется для текущего шлюза" autocomplete="off" /></label><p class="dialog-help">Список моделей загружается из <code>/v1/models</code>. Ключ хранится только в браузере.</p><div class="dialog-actions"><button class="secondary-button" value="cancel" type="submit">Закрыть</button><button class="primary-button" id="saveSettings" value="default" type="submit">Сохранить и проверить</button></div></form></dialog>
     <dialog class="settings-dialog agent-dialog" id="agentsDialog" aria-labelledby="agentsTitle" aria-describedby="agentsSummary">
       <form method="dialog">
@@ -75,6 +79,6 @@
       </form>
     </dialog>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="app.js?v=0.2.0"></script>
+    <script src="app.js?v=0.3.0"></script>
   </body>
 </html>

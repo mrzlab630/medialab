@@ -165,11 +165,13 @@ class AgentAPITest(unittest.TestCase):
         job = self.finish(self.submit())
         self.assertEqual(job["status"], "completed", job)
         item = job["results"][0]
+        self.assertEqual(item["parameters"], {"size": "1024x1024", "reference_count": 0})
         self.assertEqual(self.request(item["url"]), (200, PNG))
         self.assertEqual(self.request("/api/library")[1], [item])
         self.assertEqual(self.request("/api/agent/jobs")[1]["data"][0]["id"], job["id"])
         status, browser_item = self.request("/api/library", {"data_url": DATA_URL, "prompt": "browser"})
         self.assertEqual(status, 201)
+        self.assertNotIn("parameters", browser_item)
         self.assertEqual(len(self.request("/api/library")[1]), 2)
         self.assertEqual(self.request(browser_item["url"])[1], PNG)
 
@@ -177,6 +179,21 @@ class AgentAPITest(unittest.TestCase):
         job = self.finish(self.submit(prompt="url"))
         self.assertEqual(job["status"], "completed", job)
         self.assertEqual(self.request(job["results"][0]["url"])[1], PNG)
+
+    def test_browser_generation_parameters_survive_library_reload(self):
+        parameters = {"size": "1792x1024", "reference_count": 2}
+        status, item = self.request("/api/library", {"data_url": DATA_URL, "parameters": {**parameters, "references": [DATA_URL]}})
+        self.assertEqual(status, 201)
+        self.assertEqual(item["parameters"], parameters)
+        self.assertEqual(self.request("/api/library")[1][0]["parameters"], parameters)
+        self.assertNotIn(DATA_URL, server.INDEX.read_text())
+
+    def test_invalid_library_parameters_do_not_create_files(self):
+        for parameters in ([], {"size": "invalid"}, {"seconds": True}, {"generate_audio": "yes"}, {"reference_count": 11}):
+            with self.subTest(parameters=parameters):
+                self.assertEqual(self.request("/api/library", {"data_url": DATA_URL, "parameters": parameters})[0], 400)
+        self.assertEqual(self.request("/api/library")[1], [])
+        self.assertEqual(list(server.LIBRARY.glob("*.png")), [])
 
     def test_multipart_and_seedream_references(self):
         item = self.request("/api/library", {"data_url": DATA_URL})[1]
@@ -196,6 +213,7 @@ class AgentAPITest(unittest.TestCase):
         job = self.finish(self.submit(type="video", model="grok-imagine-video-1.5", seconds=6, generate_audio=True, references=[DATA_URL]))
         self.assertEqual(job["status"], "completed", job)
         self.assertEqual(job["upstream_task_id"], "remote-video")
+        self.assertEqual(job["results"][0]["parameters"], {"size": "1280x720", "seconds": 6, "generate_audio": True, "reference_count": 1})
         self.assertEqual(self.request(job["results"][0]["url"])[1], VIDEO)
         payload = self.gateway.calls[-1][1]
         self.assertIs(payload["generate_audio"], True)
