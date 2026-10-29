@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css?v=20261021-audio-1" />
+    <link rel="stylesheet" href="styles.css?v=0.2.0" />
   </head>
   <body>
     <div class="app-shell">
@@ -26,7 +26,7 @@
       </aside>
 
       <main class="main-content">
-        <header class="topbar"><div><p class="eyebrow">LOCAL CREATIVE WORKSPACE</p><h1>Создай идею.</h1></div><div class="top-actions"><span class="model-count" id="modelCount">— моделей</span><button class="icon-button" id="refreshButton" type="button" title="Обновить список моделей">↻</button></div></header>
+        <header class="topbar"><div><p class="eyebrow">LOCAL CREATIVE WORKSPACE</p><h1>Создай идею.</h1></div><div class="top-actions"><button class="agents-button" id="agentsButton" type="button" aria-haspopup="dialog" aria-controls="agentsDialog">ИИ агентам</button><span class="model-count" id="modelCount">— моделей</span><button class="icon-button" id="refreshButton" type="button" title="Обновить список моделей">↻</button></div></header>
 
         <section class="create-layout" aria-label="Создание медиа">
           <div class="composer-panel">
@@ -58,7 +58,23 @@
     </div>
 
     <dialog class="settings-dialog" id="settingsDialog"><form method="dialog" id="settingsForm"><div class="dialog-heading"><div><p class="eyebrow">CONNECTION</p><h2>Подключение</h2></div><button class="dialog-close" value="cancel" type="submit">×</button></div><label class="dialog-label" for="endpointInput">Base URL шлюза<input id="endpointInput" type="url" placeholder="http://127.0.0.1:8317" /></label><label class="dialog-label" for="apiKeyInput">API key <em>если включена авторизация</em><input id="apiKeyInput" type="password" placeholder="Не требуется для текущего шлюза" autocomplete="off" /></label><p class="dialog-help">Список моделей загружается из <code>/v1/models</code>. Ключ хранится только в браузере.</p><div class="dialog-actions"><button class="secondary-button" value="cancel" type="submit">Закрыть</button><button class="primary-button" id="saveSettings" value="default" type="submit">Сохранить и проверить</button></div></form></dialog>
+    <dialog class="settings-dialog agent-dialog" id="agentsDialog" aria-labelledby="agentsTitle" aria-describedby="agentsSummary">
+      <form method="dialog">
+        <div class="dialog-heading"><div><p class="eyebrow">AGENT API</p><h2 id="agentsTitle">Прямой доступ для агентов</h2></div><button class="dialog-close" type="submit" aria-label="Закрыть справку">×</button></div>
+        <p id="agentsSummary">Создавайте изображения и видео через HTTP API. Доступ открыт, регистрация и токены не нужны.</p>
+        <p>Адрес приложения: <code id="agentBaseUrl"></code></p>
+        <ol class="agent-steps">
+          <li>Прочитать <a href="/api/agent/openapi.json" target="_blank" rel="noopener">OpenAPI схему</a> и получить <a href="/api/agent/models" target="_blank" rel="noopener">каталог моделей</a>.</li>
+          <li>Создать задачу через <code>POST /api/agent/jobs</code> с уникальным <code>Idempotency-Key</code>.</li>
+          <li>Опрашивать <code>status_url</code> раз в 4 секунды. При <code>completed</code> скачать <code>results[].url</code> с адреса приложения.</li>
+        </ol>
+        <p>При <code>failed</code> или <code>interrupted</code> прочитать <code>error.message</code>. Не повторять генерацию автоматически. Результаты сохраняются в общую библиотеку.</p>
+        <label class="agent-instructions-label" for="agentInstructions">Готовая инструкция для вашего агента</label>
+        <textarea class="agent-instructions" id="agentInstructions" rows="7" readonly spellcheck="false"></textarea>
+        <div class="agent-dialog-actions"><a href="/docs/AGENT_API.md" target="_blank" rel="noopener">Полная документация ↗</a><button class="primary-button" id="copyAgentInstructions" type="button">Скопировать инструкцию</button></div>
+      </form>
+    </dialog>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="app.js?v=20261021-audio-1"></script>
+    <script src="app.js?v=0.2.0"></script>
   </body>
 </html>
