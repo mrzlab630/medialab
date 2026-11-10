@@ -43,7 +43,7 @@ class Gateway(BaseHTTPRequestHandler):
             else:
                 self.reply(200, {"data": [{"id": "test-image"}, {"id": "test-video"}]})
         elif self.path.endswith("/content"):
-            self.reply(200, VIDEO, "video/mp4")
+            self.reply(200, VIDEO, getattr(self.server, "video_mime", "video/mp4"))
         elif self.path == "/v1/videos/remote-video":
             self.reply(200, {"data": {"status": "completed"}})
         elif self.path == "/result.png":
@@ -231,6 +231,23 @@ class AgentAPITest(unittest.TestCase):
         self.assertEqual(payload["aspect_ratio"], "16:9")
         self.assertIn("Image 1", payload["prompt"])
         self.assertIs(payload["generate_audio"], False)
+
+    def test_veo_duration_and_binary_video_content(self):
+        for model in ("gemini-veo3.1", "gemini-veo3.1-fast"):
+            status, error = self.request("/api/agent/jobs", {"type": "video", "model": model, "prompt": "test", "seconds": 5})
+            self.assertEqual(status, 400)
+            self.assertIn("seconds=8", error["error"]["message"])
+        self.assertEqual(self.gateway.calls, [])
+        self.gateway.video_mime = "application/octet-stream"
+        job = self.finish(self.submit(type="video", model="gemini-veo3.1-fast"))
+        self.assertEqual(job["status"], "completed", job)
+        self.assertEqual(self.gateway.calls[-1][1]["seconds"], "8")
+        self.assertEqual(job["results"][0]["parameters"]["seconds"], 8)
+        self.assertTrue(job["results"][0]["url"].endswith(".mp4"))
+        self.assertEqual(self.request(job["results"][0]["url"])[1], VIDEO)
+        with urlopen(self.base + "/api/videos/remote-video/content", timeout=10) as response:
+            self.assertEqual(response.headers.get_content_type(), "video/mp4")
+            self.assertEqual(response.read(), VIDEO)
 
     def test_browser_reference_upload_remains_compatible(self):
         raw, mime = AgentAPI.multipart({}, [(PNG, "image/png")])

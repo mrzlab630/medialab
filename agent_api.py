@@ -105,10 +105,13 @@ class AgentAPI:
         size = body.get("size", "1280x720" if media_type == "video" else "1024x1024")
         if not isinstance(size, str) or not re.fullmatch(r"[1-9]\d{1,4}x[1-9]\d{1,4}", size):
             raise APIError(400, "size must have WIDTHxHEIGHT format")
-        seconds = body.get("seconds", 5)
+        model = body["model"].lower().split("/")[-1]
+        fixed_seconds = 8 if media_type == "video" and model.startswith("gemini-veo") else None
+        seconds = body.get("seconds", fixed_seconds or 5)
         if type(seconds) is not int or not 1 <= seconds <= 60:
             raise APIError(400, "seconds must be an integer between 1 and 60")
-        model = body["model"].lower().split("/")[-1]
+        if fixed_seconds and seconds != fixed_seconds:
+            raise APIError(400, "gemini-veo models require seconds=8")
         if "generate_audio" in body and (type(body["generate_audio"]) is not bool or media_type != "video" or model not in VIDEO_AUDIO):
             raise APIError(400, "generate_audio requires a supported video model and a boolean")
         references = body.get("references", [])
@@ -304,6 +307,8 @@ class AgentAPI:
                 else:
                     content = base64.b64decode(item.get("b64_json") or item["base64"], validate=True)
                     mime = item.get("mime") or ("video/mp4" if request["type"] == "video" else "image/png")
+                if request["type"] == "video" and mime == "application/octet-stream":
+                    mime = "video/mp4"
                 if not mime.startswith(request["type"] + "/"):
                     raise APIError(502, "Gateway returned an unexpected media content type")
                 results.append(self.store_media(content, mime, request["type"], request["prompt"], request["model"], parameters))
@@ -345,7 +350,7 @@ def openapi():
                 "model": {"type": "string", "minLength": 1, "maxLength": 300},
                 "prompt": {"type": "string", "minLength": 1, "maxLength": 4000},
                 "size": {"type": "string", "pattern": "^[1-9]\\d{1,4}x[1-9]\\d{1,4}$", "description": "Defaults: image 1024x1024, video 1280x720. Seedream UI sizes are mapped to its larger native sizes."},
-                "seconds": {"type": "integer", "minimum": 1, "maximum": 60, "default": 5, "description": "Video duration; actual support depends on the selected model."},
+                "seconds": {"type": "integer", "minimum": 1, "maximum": 60, "description": "Video duration. Default 5; gemini-veo models default to and only accept 8. Other duration limits depend on the selected model."},
                 "generate_audio": {"type": "boolean", "description": "Video only. Supported models: " + ", ".join(sorted(VIDEO_AUDIO)) + ". Defaults to false for these models."},
                 "references": {"type": "array", "maxItems": 10, "items": {"type": "string"}, "description": "Up to 10 image/video references, 5 for Grok image 2.0; at most 10 MB each. Use base64 data URLs, HTTP(S) URLs, or existing /library/ file URLs. Image generation accepts images only. Seedance 2.5 uploads through the existing server asset service."},
             }},

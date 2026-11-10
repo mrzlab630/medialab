@@ -1,32 +1,33 @@
-const state={endpoint:localStorage.getItem('mediaLabEndpoint')||'http://127.0.0.1:8317',apiKey:localStorage.getItem('mediaLabApiKey')||'',mode:'image',models:[],modelRequests:0,activeController:null,references:[],history:[],historyPage:1,historyPageSize:10,libraryItem:null,libraryPreset:null};
+const state={endpoint:localStorage.getItem('mediaLabEndpoint')||'http://127.0.0.1:8317',apiKey:localStorage.getItem('mediaLabApiKey')||'',mode:'image',models:[],modelTypes:new Map(),modelCatalogState:'loading',modelRequests:0,activeController:null,references:[],history:[],historyPage:1,historyPageSize:10,libraryItem:null,libraryPreset:null};
 localStorage.removeItem('mediaLabHistory');
 const $=s=>document.querySelector(s);const $$=s=>[...document.querySelectorAll(s)];
 const imageEditPriority=['gpt-image-2.5','gpt-image-2','gpt-image-1.5','gpt-image-2.5-flare','gpt-image-2.5-sunburst','dola-seedream-5-0-flash-260915','seedream-5-0-260128','seedream-4-5-251128','dola-seedream-5-0-pro-260628','dola-seedream-5-0-pro-260628-2k','dola-seedream-5-0-pro-260628-ep','grok-imagine-image-2.0','grok-imagine-image'];
 const videoPriority=['grok-imagine-video-1.5','dreamina-seedance-2-5-260628','gemini-veo3.1','firefly-video'];
-const imageModelStatus={'gpt-image-1.5':'verified','gpt-image-2':'verified','gpt-image-2.5':'verified','gpt-image-2.5-flare':'verified','gpt-image-2.5-sunburst':'verified','gpt-image-2.5-flare-max':'unavailable','gpt-image-2.5-gf':'unavailable','dola-seedream-5-0-flash-260915':'verified'};
-const videoModelStatus={'grok-imagine-video-1.5':'verified','dreamina-seedance-2-5-260628':'unverified','gemini-veo3.1':'unavailable','firefly-video':'unavailable'};
 const videoAudioModels=new Set(['dreamina-seedance-2-5-260628','dreamina-seedance-2-0-260128','dreamina-seedance-2-0-fast-260128','dreamina-seedance-2-0-mini-260615','grok-imagine-video','grok-imagine-video-1.5']);
 const supportsVideoAudio=model=>videoAudioModels.has(String(model||'').toLowerCase().split('/').pop());
 const isSeedreamModel=model=>/seedream/i.test(model);
 const seedreamSize=size=>({'1024x1024':'2048x2048','1536x1024':'2400x1600','1024x1536':'1600x2400','1792x1024':'2560x1440','1024x1792':'1440x2560'}[size]||'2048x2048');
 const referenceLimit=model=>/^xai\/grok-imagine-image-2\.0$|^grok-imagine-image-2\.0$/i.test(model)?5:10;
 const modelPriority=(model,mode)=>{const list=mode==='video'?videoPriority:imageEditPriority;return list.indexOf(model.toLowerCase().replace(/^xai\//,''))+1||100};
-const modelLooks=(id,mode)=>{const value=id.toLowerCase();const video=/(video|veo|seedance|wan|kling|firefly|runway|sora|hailuo|ltx|hunyuan)/.test(value);const image=/(^|[-_/ .])(image|seedream|nano.?banana|flux|imagen|grok-imagine|ideogram|recraft)([-_/ .]|$)/.test(value)||value.includes('gpt-image')||value.includes('gemini-')&&value.includes('image');return mode==='video'?video:image&&!video;};
+const modelLooks=(id,mode)=>{const kind=state.modelTypes.get(id);if(kind)return kind===mode;const value=id.toLowerCase();const video=/(video|veo|seedance|wan|kling|firefly|runway|sora|hailuo|ltx|hunyuan)/.test(value);const image=/(^|[-_/ .])(image|seedream|nano.?banana|flux|imagen|grok-imagine|ideogram|recraft)([-_/ .]|$)/.test(value)||value.includes('gpt-image')||value.includes('gemini-')&&value.includes('image');return mode==='video'?video:image&&!video;};
 function headers(json=false){const h={};if(json)h['Content-Type']='application/json';if(state.apiKey)h.Authorization=`Bearer ${state.apiKey}`;return h}
 function endpoint(path){return `${state.endpoint.replace(/\/$/,'')}${path}`}
 async function api(path,options={}){const jsonBody=typeof options.body==='string';const response=await fetch(endpoint(path),{...options,headers:{...headers(jsonBody),...(options.headers||{})}});const text=await response.text();let data;try{data=text?JSON.parse(text):{}}catch{data={raw:text}}if(!response.ok){const message=data?.error?.message||data?.message||text||`HTTP ${response.status}`;throw new Error(`${response.status}: ${message}`)}return {response,data}}
 async function libraryApi(path,options={}){const response=await fetch(path,options);const text=await response.text();let data;try{data=text?JSON.parse(text):{}}catch{data={raw:text}}if(!response.ok)throw new Error(data?.error||data?.message||text||`HTTP ${response.status}`);return {response,data}}
 async function loadModels(){
   const button=$('#refreshButton');
-  state.modelRequests++;button.disabled=true;button.classList.add('is-loading');button.setAttribute('aria-busy','true');
+  state.modelRequests++;state.modelCatalogState='loading';button.disabled=true;button.classList.add('is-loading');button.setAttribute('aria-busy','true');
   try{
     const {data}=await api('/v1/models');
-    state.models=(data.data||[]).map(item=>typeof item==='string'?item:item.id).filter(Boolean).sort((a,b)=>modelPriority(a,state.mode)-modelPriority(b,state.mode)||a.localeCompare(b));
+    const models=(Array.isArray(data.data)?data.data:[]).map(item=>typeof item==='string'?{id:item}:item).filter(item=>item&&typeof item.id==='string'&&item.id.trim());
+    state.modelTypes=new Map(models.filter(item=>typeof item.type==='string').map(item=>[item.id,item.type.toLowerCase()]));
+    state.models=[...new Set(models.map(item=>item.id))].sort((a,b)=>modelPriority(a,state.mode)-modelPriority(b,state.mode)||a.localeCompare(b));
+    state.modelCatalogState='ready';
     const images=state.models.filter(id=>modelLooks(id,'image')).length;
     const videos=state.models.filter(id=>modelLooks(id,'video')).length;
     $('#modelCount').innerHTML=`<span role="img" title="Модели изображений" aria-label="Модели изображений: ${images}">▧ ${images}</span> · <span role="img" title="Модели видео" aria-label="Модели видео: ${videos}">▶ ${videos}</span>`;
     renderModels();
-  }catch(error){$('#modelCount').textContent='нет соединения';renderModels();toast(`Не удалось загрузить модели: ${error.message}`)}
+  }catch(error){state.models=[];state.modelTypes.clear();state.modelCatalogState='error';$('#modelCount').textContent='нет соединения';renderModels();toast(`Не удалось загрузить модели: ${error.message}`)}
   finally{
     state.modelRequests--;
     if(state.modelRequests===0){button.disabled=false;button.classList.remove('is-loading');button.setAttribute('aria-busy','false')}
@@ -38,23 +39,21 @@ function renderModels(){
   const previous=preset?.model||select.value;
   const query=$('#modelSearch')?.value.trim().toLowerCase()||'';
   const filtered=state.models.filter(id=>modelLooks(id,state.mode)&&(!query||id.toLowerCase().includes(query))).sort((a,b)=>modelPriority(a,state.mode)-modelPriority(b,state.mode)||a.localeCompare(b));
-  const fallback=state.mode==='video'?['grok-imagine-video-1.5','dreamina-seedance-2-5-260628','gemini-veo3.1']:['gpt-image-2.5','gemini-3-pro-image-preview','grok-imagine-image'];
-  const choices=filtered.length?filtered:(query?[]:fallback);
+  const choices=filtered;
   select.innerHTML='';
-  if(!choices.length){const option=new Option('Модель не найдена','');option.disabled=true;select.append(option)}
+  if(!choices.length){const message=query?'Модель не найдена':state.modelCatalogState==='loading'?'Загрузка моделей…':state.modelCatalogState==='error'?'Каталог моделей недоступен':'Нет моделей этого типа';const option=new Option(message,'');option.disabled=true;select.append(option)}
   choices.forEach(id=>{
-    const status=state.mode==='video'?videoModelStatus[id.toLowerCase()]:(imageModelStatus[id.toLowerCase()]||(isSeedreamModel(id)?'json':''));
-    const label=status==='verified'?`${id} · референсы сохранены`:status==='unverified'?`${id} · референс не подтверждён`:status==='json'?`${id} · JSON-референс`:status==='unavailable'?`${id} · недоступна сейчас`:id;
-    const option=new Option(label,id);option.disabled=status==='unavailable';select.append(option);
+    const label=isSeedreamModel(id)?`${id} · JSON-референс`:id;
+    select.append(new Option(label,id));
   });
   if(preset&&!query&&preset.model&&!choices.includes(preset.model)){
     const option=new Option(`${preset.model} · нет в каталоге`,preset.model);option.disabled=true;select.append(option);
   }
   if([...select.options].some(option=>option.value===previous))select.value=previous;
-  $('#modelHint').textContent=query?`${filtered.length} найдено`:`${filtered.length||fallback.length} доступно`;
+  $('#modelHint').textContent=query?`${filtered.length} найдено`:state.modelCatalogState==='loading'?'Загрузка…':state.modelCatalogState==='error'?'Каталог недоступен':`${filtered.length} в каталоге`;
   updateAudioControl();
 }
-function updateAudioControl(){const available=state.mode==='video'&&supportsVideoAudio($('#modelSelect').value);$('#audioField').classList.toggle('hidden',!available);$('#audioToggle').disabled=!available;$('#audioState').textContent=$('#audioToggle').checked?'Со звуком':'Без звука'}
+function updateAudioControl(){const model=$('#modelSelect').value;const available=state.mode==='video'&&supportsVideoAudio(model);$('#audioField').classList.toggle('hidden',!available);$('#audioToggle').disabled=!available;$('#audioState').textContent=$('#audioToggle').checked?'Со звуком':'Без звука';const fixed=state.mode==='video'&&/^gemini-veo/i.test(model.split('/').pop());$('#durationSelect').disabled=fixed;$('#durationSelect').title=fixed?'Gemini Veo поддерживает 8 секунд':'';if(fixed)$('#durationSelect').value='8'}
 function setMode(mode){state.mode=mode;$$('.mode-tab').forEach(button=>{const active=button.dataset.mode===mode;button.classList.toggle('active',active);button.setAttribute('aria-selected',String(active))});$('#generateLabel').textContent=mode==='video'?'Создать видео':'Создать изображение';$('#durationField').classList.toggle('hidden',mode!=='video');$('#ratioSelect').innerHTML=mode==='video'?'<option value="1280x720">16:9 · Широкий</option><option value="720x1280">9:16 · Вертикальный</option><option value="1024x1024">1:1 · Квадрат</option>':'<option value="1024x1024">1:1 · Квадрат</option><option value="1536x1024">3:2 · Альбом</option><option value="1024x1536">2:3 · Портрет</option><option value="1792x1024">16:9 · Широкий</option><option value="1024x1792">9:16 · Вертикальный</option>';renderModels()}
 function showEmpty(){ $('#previewStage').innerHTML='<div class="empty-state"><div class="empty-orbit"><span>✦</span></div><h3>Здесь появится твоя работа</h3><p>Выбери модель, напиши промт<br />и запусти первую генерацию.</p></div>' }
 function showError(error){const privacyRejected=/InputImageSensitiveContentDetected\.PrivacyInformation/i.test(error.message);const title=privacyRejected?'Seedance отклонила референс':'Не удалось создать результат';const detail=privacyRejected?'Входное изображение заблокировано проверкой безопасности как возможное фото реального человека. Задача генерации не создана.':error.message;const hint=privacyRejected?'':'<br /><br />Проверь модель и маршрут шлюза. Для видео используется <code>/v1/videos/generations</code>, для изображений — <code>/v1/images/generations</code>.';$('#previewStage').innerHTML=`<div class="preview-error"><strong>${title}</strong><p>${escapeHtml(detail)}${hint}</p></div>`}

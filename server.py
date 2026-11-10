@@ -144,6 +144,8 @@ class Handler(SimpleHTTPRequestHandler):
                 if len(content) > 100 * 1024 * 1024:
                     raise ValueError("video content exceeds 100 MB")
                 mime = response.headers.get_content_type() or "video/mp4"
+                if mime == "application/octet-stream":
+                    mime = "video/mp4"
                 self.send_response(response.status)
                 self.send_header("Content-Type", mime)
                 self.send_header("Content-Length", str(len(content)))
